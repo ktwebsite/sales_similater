@@ -1,0 +1,169 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+  workflow_dispatch: # 手動トリガーも可能にする
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: asia-northeast1
+  SERVICE_NAME: live-talk-app
+  ARTIFACT_REGISTRY: asia-northeast1-docker.pkg.dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # デバッグ: GitHub コンテキスト情報を表示
+      - name: Debug GitHub Context
+        run: |
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository Owner: ${{ github.repository_owner }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Event: ${{ github.event_name }}"
+
+      # Google Cloud への認証 (Workload Identity)
+      - name: Google Auth
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: 'projects/603009501492/locations/global/workloadIdentityPools/github-pool/providers/github-provider'
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # Cloud SDK のセットアップ
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Secret Manager にAPIキーを設定
+      - name: Setup Secret Manager
+        if: github.event_name != 'pull_request'
+        run: |
+          # gemini-api-key が存在するか確認
+          if ! gcloud secrets describe gemini-api-key --project=${{ env.PROJECT_ID }} &>/dev/null; then
+            echo "Creating gemini-api-key secret..."
+            echo -n "${{ secrets.GEMINI_API_KEY }}" | gcloud secrets create gemini-api-key \
+              --data-file=- \
+              --replication-policy="automatic" \
+              --project=${{ env.PROJECT_ID }}
+            
+            # Cloud Run のデフォルトサービスアカウントに権限付与
+            PROJECT_NUMBER=$(gcloud projects describe ${{ env.PROJECT_ID }} --format="value(projectNumber)")
+            gcloud secrets add-iam-policy-binding gemini-api-key \
+              --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+              --role="roles/secretmanager.secretAccessor" \
+              --project=${{ env.PROJECT_ID }}
+            
+            echo "Secret created and permissions granted"
+          else
+            echo "Secret gemini-api-key already exists"
+          fi
+
+          # firebase-service-account が存在するか確認
+          if ! gcloud secrets describe firebase-service-account --project=${{ env.PROJECT_ID }} &>/dev/null; then
+            echo "Creating firebase-service-account secret..."
+            echo -n '${{ secrets.FIREBASE_SERVICE_ACCOUNT }}' | gcloud secrets create firebase-service-account \
+              --data-file=- \
+              --replication-policy="automatic" \
+              --project=${{ env.PROJECT_ID }}
+            
+            # Cloud Run のデフォルトサービスアカウントに権限付与
+            PROJECT_NUMBER=$(gcloud projects describe ${{ env.PROJECT_ID }} --format="value(projectNumber)")
+            gcloud secrets add-iam-policy-binding firebase-service-account \
+              --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" \
+              --role="roles/secretmanager.secretAccessor" \
+              --project=${{ env.PROJECT_ID }}
+            
+            echo "Firebase secret created and permissions granted"
+          else
+            echo "Secret firebase-service-account already exists"
+          fi
+
+      # Docker 認証
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker ${{ env.ARTIFACT_REGISTRY }}
+
+      # Docker イメージのビルドとプッシュ
+      - name: Build and Push Docker Image
+        if: github.event_name != 'pull_request'
+        run: |
+          IMAGE_NAME="${{ env.ARTIFACT_REGISTRY }}/${{ env.PROJECT_ID }}/live-talk/${{ env.SERVICE_NAME }}"
+          IMAGE_TAG="${IMAGE_NAME}:${{ github.sha }}"
+          IMAGE_LATEST="${IMAGE_NAME}:latest"
+
+          # デバッグ: 環境変数の確認（値は表示しない）
+          echo "Checking Firebase secrets..."
+          if [ -z "${{ secrets.REACT_APP_FIREBASE_API_KEY }}" ]; then
+            echo "ERROR: REACT_APP_FIREBASE_API_KEY is not set!"
+            exit 1
+          fi
+          if [ -z "${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}" ]; then
+            echo "ERROR: REACT_APP_FIREBASE_AUTH_DOMAIN is not set!"
+            exit 1
+          fi
+          echo "All Firebase secrets are present"
+
+          # Firebase環境変数をビルド引数として渡す
+          docker build \
+            --build-arg REACT_APP_FIREBASE_API_KEY="${{ secrets.REACT_APP_FIREBASE_API_KEY }}" \
+            --build-arg REACT_APP_FIREBASE_AUTH_DOMAIN="${{ secrets.REACT_APP_FIREBASE_AUTH_DOMAIN }}" \
+            --build-arg REACT_APP_FIREBASE_PROJECT_ID="${{ secrets.REACT_APP_FIREBASE_PROJECT_ID }}" \
+            --build-arg REACT_APP_ALLOWED_DOMAIN="${{ secrets.REACT_APP_ALLOWED_DOMAIN }}" \
+            -t "${IMAGE_TAG}" \
+            -t "${IMAGE_LATEST}" \
+            .
+          docker push "${IMAGE_TAG}"
+          docker push "${IMAGE_LATEST}"
+
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=${IMAGE_LATEST}" >> $GITHUB_ENV
+
+      # Cloud Run へのデプロイ（mainブランチへのpush時のみ）
+      - name: Deploy to Cloud Run
+        if: github.event_name != 'pull_request'
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image=${{ env.IMAGE_LATEST }} \
+            --region=${{ env.REGION }} \
+            --platform=managed \
+            --allow-unauthenticated \
+            --set-secrets=GEMINI_API_KEY=gemini-api-key:latest,FIREBASE_SERVICE_ACCOUNT_JSON=firebase-service-account:latest \
+            --set-env-vars=KINTONE_SUBDOMAIN=${{ secrets.KINTONE_SUBDOMAIN }},KINTONE_APP_ID=${{ secrets.KINTONE_APP_ID }},KINTONE_API_TOKEN=${{ secrets.KINTONE_API_TOKEN }},ALLOWED_EMAIL_DOMAIN=htb-energy.com \
+            --memory=512Mi \
+            --cpu=1 \
+            --min-instances=0 \
+            --max-instances=10 \
+            --timeout=1200 \
+            --vpc-connector=serverless-connector \
+            --vpc-egress=all-traffic \
+            --project=${{ env.PROJECT_ID }}
+
+      # デプロイ URL の取得と表示
+      - name: Get Service URL
+        if: github.event_name != 'pull_request'
+        run: |
+          SERVICE_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region=${{ env.REGION }} \
+            --format='value(status.url)' \
+            --project=${{ env.PROJECT_ID }})
+          echo "Service deployed to: ${SERVICE_URL}"
+          echo "SERVICE_URL=${SERVICE_URL}" >> $GITHUB_ENV

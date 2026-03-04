@@ -1,0 +1,49 @@
+# This file specifies files that are *not* uploaded to Google Cloud
+# using gcloud. It follows the same syntax as .gitignore
+
+.gcloudignore
+.git
+.gitignore
+
+# Node.js - 静的ビルド済みファイル（build/）のみアップロード
+node_modules/
+src/
+public/
+package.json
+package-lock.json
+tsconfig.json
+*.test.tsx
+*.test.ts
+
+# 環境変数・認証情報
+.env
+.env.local
+.env.*.local
+service_account.json
+
+# ログファイル
+logs/
+*.log
+
+# ドキュメント
+README.md
+docs/
+*.md
+CHANGELOG.md
+LICENSE
+
+# 開発環境
+.vscode/
+.idea/
+*.code-workspace
+
+# Git管理
+.git/
+.github/
+
+# その他
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*~

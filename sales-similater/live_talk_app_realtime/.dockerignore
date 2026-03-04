@@ -1,0 +1,60 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+
+# Production (ビルドはDocker内で行う)
+build/
+
+# Misc
+.DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+*.md
+docs/
+
+# Cloud/Deployment configs
+app.yaml
+.gcloudignore
+Dockerfile
+.dockerignore
+
+# Logs
+logs/
+*.log
+
+# Service account keys（絶対にイメージに含めない）
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+
+# Zone Identifier files（WSL/Windows特有）
+*:Zone.Identifier
+*:Zone.Identifier
