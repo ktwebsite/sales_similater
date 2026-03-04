@@ -1,6 +1,5 @@
 import { useRef, useState, useEffect } from "react";
 import { LiveAPIProvider } from "../contexts/LiveAPIContext";
-import UserMenu from "./auth/UserMenu";
 import SidePanel from "./side-panel/SidePanel";
 import { Altair } from "./altair/Altair";
 import ControlTray from "./control-tray/ControlTray";
@@ -79,9 +78,6 @@ export default function MainApp() {
         <div className="streaming-console">
           <SidePanel />
           <main>
-            <div className="user-menu-container">
-              <UserMenu />
-            </div>
             <div className="main-app-area">
               <Altair />
               <Transcription />

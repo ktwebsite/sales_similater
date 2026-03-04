@@ -15,18 +15,10 @@
  */
 
 import "./App.scss";
-import { AuthProvider } from "./contexts/AuthContext";
-import AuthGuard from "./components/auth/AuthGuard";
 import MainApp from "./components/MainApp";
 
 function App() {
-  return (
-    <AuthProvider>
-      <AuthGuard>
-        <MainApp />
-      </AuthGuard>
-    </AuthProvider>
-  );
+  return <MainApp />;
 }
 
 export default App;
